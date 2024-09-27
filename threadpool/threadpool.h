@@ -20,7 +20,7 @@ public:
 
 private:
     /*工作线程运行的函数，它不断从工作队列中取出任务并执行之*/
-    static void *worker(void *arg);
+    static void *worker(void *arg);     // pthread_create要求线程入口是void*(*)(void*), 所以得是静态的(没有自动的this参数)
     void run();
 
 private:
@@ -30,36 +30,42 @@ private:
     std::list<T *> m_workqueue; //请求队列
     locker m_queuelocker;       //保护请求队列的互斥锁
     sem m_queuestat;            //是否有任务需要处理
-    connection_pool *m_connPool;  //数据库
-    int m_actor_model;          //模型切换
+    connection_pool *m_connPool;  //数据库连接池
+    int m_actor_model;          //模型切换, 0为proactor, 1为reactor
 };
-template <typename T>
-threadpool<T>::threadpool( int actor_model, connection_pool *connPool, int thread_number, int max_requests) : m_actor_model(actor_model),m_thread_number(thread_number), m_max_requests(max_requests), m_threads(NULL),m_connPool(connPool)
+
+template <typename T>   // 模板嵌模板
+threadpool<T>::threadpool(int actor_model, connection_pool *connPool, int thread_number, int max_requests) : 
+    m_actor_model(actor_model), m_thread_number(thread_number), 
+    m_max_requests(max_requests), m_threads(NULL), m_connPool(connPool)
 {
     if (thread_number <= 0 || max_requests <= 0)
         throw std::exception();
     m_threads = new pthread_t[m_thread_number];
     if (!m_threads)
         throw std::exception();
-    for (int i = 0; i < thread_number; ++i)
+    for (int i = 0; i < thread_number; ++i) // 创建工作线程池
     {
-        if (pthread_create(m_threads + i, NULL, worker, this) != 0)
+        if (pthread_create(m_threads + i, NULL, worker, this) != 0) // 把对象作为参数传递给worker静态函数
         {
             delete[] m_threads;
             throw std::exception();
         }
-        if (pthread_detach(m_threads[i]))
+        if (pthread_detach(m_threads[i]))   // 将线程标记为分离状态, 线程终止后会自动释放资源
         {
             delete[] m_threads;
             throw std::exception();
         }
     }
 }
+
 template <typename T>
 threadpool<T>::~threadpool()
 {
     delete[] m_threads;
 }
+
+// 主线程: 向请求队列中插入任务请求
 template <typename T>
 bool threadpool<T>::append(T *request, int state)
 {
@@ -69,12 +75,13 @@ bool threadpool<T>::append(T *request, int state)
         m_queuelocker.unlock();
         return false;
     }
-    request->m_state = state;
-    m_workqueue.push_back(request);
+    request->m_state = state;       // 比append_p多了这行
+    m_workqueue.push_back(request); // 加入请求队列
     m_queuelocker.unlock();
-    m_queuestat.post();
+    m_queuestat.post();     // V, release, m_queuestat++, 空->有则唤醒worker
     return true;
 }
+
 template <typename T>
 bool threadpool<T>::append_p(T *request)
 {
@@ -89,6 +96,8 @@ bool threadpool<T>::append_p(T *request)
     m_queuestat.post();
     return true;
 }
+
+// 创建一个工作线程, 并运行
 template <typename T>
 void *threadpool<T>::worker(void *arg)
 {
@@ -96,55 +105,58 @@ void *threadpool<T>::worker(void *arg)
     pool->run();
     return pool;
 }
+
+// 工作线程运行的函数, 它不断从工作队列中取出任务并执行之
 template <typename T>
 void threadpool<T>::run()
 {
     while (true)
     {
-        m_queuestat.wait();
+        m_queuestat.wait();     // P, await, m_queuestat--
         m_queuelocker.lock();
+        // 请求队列为空则等待唤醒
         if (m_workqueue.empty())
         {
             m_queuelocker.unlock();
             continue;
         }
+        // 请求队列不为空则处理请求
+        // 1. 取请求任务
         T *request = m_workqueue.front();
         m_workqueue.pop_front();
         m_queuelocker.unlock();
         if (!request)
             continue;
-        if (1 == m_actor_model)
+        if (1 == m_actor_model) // reactor
         {
-            if (0 == request->m_state)
+            request->improv = 1;
+            if (0 == request->m_state)  // 可读
             {
-                if (request->read_once())
+                if (request->read_once())   // 读取一次用户数据, 成功
                 {
-                    request->improv = 1;
+                    // 2. 取数据库连接(出花括号析构的时候就会把连接放回池)
                     connectionRAII mysqlcon(&request->mysql, m_connPool);
+                    // 3. 处理
                     request->process();
                 }
-                else
+                else        // 读取失败
                 {
-                    request->improv = 1;
                     request->timer_flag = 1;
                 }
             }
-            else
+            else        // 可写
             {
-                if (request->write())
+                if (!request->write())  // 写入失败
                 {
-                    request->improv = 1;
-                }
-                else
-                {
-                    request->improv = 1;
                     request->timer_flag = 1;
                 }
             }
         }
-        else
+        else        // proactor
         {
+            // 2. 取数据库连接(出花括号析构的时候就会把连接放回池)
             connectionRAII mysqlcon(&request->mysql, m_connPool);
+            // 3. 处理
             request->process();
         }
     }

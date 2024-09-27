@@ -38,7 +38,7 @@ void http_conn::initmysql_result(connection_pool *connPool)
     //返回所有字段结构的数组
     MYSQL_FIELD *fields = mysql_fetch_fields(result);
 
-    //从结果集中获取下一行，将对应的用户名和密码，存入map中
+    //从结果集中不断获取下一行，将对应的用户名和密码，存入map中
     while (MYSQL_ROW row = mysql_fetch_row(result))
     {
         string temp1(row[0]);
@@ -47,33 +47,34 @@ void http_conn::initmysql_result(connection_pool *connPool)
     }
 }
 
-//对文件描述符设置非阻塞
+// 对文件描述符设置非阻塞
 int setnonblocking(int fd)
 {
-    int old_option = fcntl(fd, F_GETFL);
-    int new_option = old_option | O_NONBLOCK;
-    fcntl(fd, F_SETFL, new_option);
+    // fcntl: 获取或设置fd的属性(int, 属性通过位来存储)
+    int old_option = fcntl(fd, F_GETFL);    // 获取fd的属性
+    int new_option = old_option | O_NONBLOCK;   // 新属性增加非阻塞设置
+    fcntl(fd, F_SETFL, new_option);         // 设置fd新属性
     return old_option;
 }
 
-//将内核事件表注册读事件，ET模式，选择开启EPOLLONESHOT
+// 将内核事件表注册读事件，ET模式，选择开启EPOLLONESHOT
 void addfd(int epollfd, int fd, bool one_shot, int TRIGMode)
 {
     epoll_event event;
     event.data.fd = fd;
 
-    if (1 == TRIGMode)
-        event.events = EPOLLIN | EPOLLET | EPOLLRDHUP;
-    else
-        event.events = EPOLLIN | EPOLLRDHUP;
+    if (1 == TRIGMode)  // ET
+        event.events = EPOLLIN | EPOLLET | EPOLLRDHUP;      // EPOLLET: 使用边缘触发模式(ET)
+    else                // LT
+        event.events = EPOLLIN | EPOLLRDHUP;    // EPOLLIN: 监听可读事件, EPOLLRDHUP: 监听被挂起事件
 
     if (one_shot)
-        event.events |= EPOLLONESHOT;
-    epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event);
+        event.events |= EPOLLONESHOT;           // 只监听一次事件
+    epoll_ctl(epollfd, EPOLL_CTL_ADD, fd, &event);          // 注册事件
     setnonblocking(fd);
 }
 
-//从内核时间表删除描述符
+// epfd内核对象删除socket
 void removefd(int epollfd, int fd)
 {
     epoll_ctl(epollfd, EPOLL_CTL_DEL, fd, 0);
@@ -86,15 +87,16 @@ void modfd(int epollfd, int fd, int ev, int TRIGMode)
     epoll_event event;
     event.data.fd = fd;
 
-    if (1 == TRIGMode)
+    // [ ] TODO: 为啥不是ev | EPOLLONESHOT就行了
+    if (1 == TRIGMode)  // ET
         event.events = ev | EPOLLET | EPOLLONESHOT | EPOLLRDHUP;
-    else
+    else                // LT
         event.events = ev | EPOLLONESHOT | EPOLLRDHUP;
 
     epoll_ctl(epollfd, EPOLL_CTL_MOD, fd, &event);
 }
 
-int http_conn::m_user_count = 0;
+int http_conn::m_user_count = 0;    // 客户量(除了0、1还有别的值吗)
 int http_conn::m_epollfd = -1;
 
 //关闭连接，关闭一个连接，客户总量减一
@@ -109,7 +111,7 @@ void http_conn::close_conn(bool real_close)
     }
 }
 
-//初始化连接,外部调用初始化套接字地址
+// 初始化连接, 外部调用初始化socket地址(为啥不写在构函里啊)
 void http_conn::init(int sockfd, const sockaddr_in &addr, char *root, int TRIGMode,
                      int close_log, string user, string passwd, string sqlname)
 {
@@ -131,8 +133,7 @@ void http_conn::init(int sockfd, const sockaddr_in &addr, char *root, int TRIGMo
     init();
 }
 
-//初始化新接受的连接
-//check_state默认为分析请求行状态
+// 重载私有, 初始化默认初值的私有成员变量, check_state默认为分析请求行状态
 void http_conn::init()
 {
     mysql = NULL;
@@ -193,30 +194,28 @@ http_conn::LINE_STATUS http_conn::parse_line()
     return LINE_OPEN;
 }
 
-//循环读取客户数据，直到无数据可读或对方关闭连接
-//非阻塞ET工作模式下，需要一次性将数据读完
+// 读取一次用户数据, 存入m_read_buf(非阻塞ET工作模式会在这次读完; LT只读一次, 下次调用再继续读)
+// 返回读取成功与否
 bool http_conn::read_once()
 {
     if (m_read_idx >= READ_BUFFER_SIZE)
     {
-        return false;
+        return false;       // buffer放不下了, 读取失败
     }
     int bytes_read = 0;
 
-    //LT读取数据
+    //LT读取数据(一次读一部分, 剩下的下次调用read_once()再读)
     if (0 == m_TRIGMode)
     {
         bytes_read = recv(m_sockfd, m_read_buf + m_read_idx, READ_BUFFER_SIZE - m_read_idx, 0);
         m_read_idx += bytes_read;
 
-        if (bytes_read <= 0)
+        if (bytes_read <= 0)    // 读取失败
         {
             return false;
         }
-
-        return true;
     }
-    //ET读数据
+    //ET读数据(一次性读完)
     else
     {
         while (true)
@@ -224,6 +223,9 @@ bool http_conn::read_once()
             bytes_read = recv(m_sockfd, m_read_buf + m_read_idx, READ_BUFFER_SIZE - m_read_idx, 0);
             if (bytes_read == -1)
             {
+                // 如果错误原因是 EAGAIN 或 EWOULDBLOCK 则不算读取失败
+                // EAGAIN: 在非阻塞模式下, 当前没有可用数据(就是此时数据已经被读完了)
+                // EWOULDBLOCK: 与 EAGAIN 等价
                 if (errno == EAGAIN || errno == EWOULDBLOCK)
                     break;
                 return false;
@@ -234,37 +236,38 @@ bool http_conn::read_once()
             }
             m_read_idx += bytes_read;
         }
-        return true;
     }
+    return true;
 }
 
-//解析http请求行，获得请求方法，目标url及http版本号
+// 解析http请求行, 相应值放入m_url, m_method, m_version, 返回解析结果
+// 请求行: `请求方法|空格|url|空格|http版本号|\r\n`
+// text是经过parse_line()处理后的一行数据, \r\n已经被处理成\0了
 http_conn::HTTP_CODE http_conn::parse_request_line(char *text)
 {
-    m_url = strpbrk(text, " \t");
+    m_url = strpbrk(text, " \t");   // 在text中找到第一个匹配' '或'\t'的指针
     if (!m_url)
     {
         return BAD_REQUEST;
     }
-    *m_url++ = '\0';
+    *m_url++ = '\0';    // 空格变成0, 指向下一位(method变成一个字符串了)
     char *method = text;
-    if (strcasecmp(method, "GET") == 0)
+    if (strcasecmp(method, "GET") == 0) // 忽略大小写判断字符串是否相等
         m_method = GET;
-    else if (strcasecmp(method, "POST") == 0)
-    {
+    else if (strcasecmp(method, "POST") == 0) {
         m_method = POST;
         cgi = 1;
-    }
-    else
+    } else          // 目前只支持GET和POST
         return BAD_REQUEST;
-    m_url += strspn(m_url, " \t");
-    m_version = strpbrk(m_url, " \t");
+    m_url += strspn(m_url, " \t");  // 去掉多余的空格(返回 str1 中第一个不在字符串 str2 中出现的字符下标)
+    m_version = strpbrk(m_url, " \t");  // 找到http版本号前的第一个空格
     if (!m_version)
         return BAD_REQUEST;
-    *m_version++ = '\0';
-    m_version += strspn(m_version, " \t");
-    if (strcasecmp(m_version, "HTTP/1.1") != 0)
+    *m_version++ = '\0';    // 空格变成0, 指向下一位(m_url变成一个字符串了)
+    m_version += strspn(m_version, " \t");  // 去掉多余的空格
+    if (strcasecmp(m_version, "HTTP/1.1") != 0) // 目前只支持HTTP/1.1
         return BAD_REQUEST;
+    // 获取url的协议部分
     if (strncasecmp(m_url, "http://", 7) == 0)
     {
         m_url += 7;
@@ -274,31 +277,35 @@ http_conn::HTTP_CODE http_conn::parse_request_line(char *text)
     if (strncasecmp(m_url, "https://", 8) == 0)
     {
         m_url += 8;
-        m_url = strchr(m_url, '/');
+        m_url = strchr(m_url, '/');     // 跳过host:port
     }
 
     if (!m_url || m_url[0] != '/')
         return BAD_REQUEST;
     //当url为/时，显示判断界面
-    if (strlen(m_url) == 1)
+    if (strlen(m_url) == 1) // 如果是根路径, 显示judge.html
         strcat(m_url, "judge.html");
-    m_check_state = CHECK_STATE_HEADER;
+    m_check_state = CHECK_STATE_HEADER; // 状态迁移: 请求行解析 -> 请求头解析
     return NO_REQUEST;
 }
 
-//解析http请求的一个头部信息
+// 解析一行的http请求头
+// 一行请求头(请求头可以有多行): `字段名|:|值|\r\n`
+// text是经过parse_line()处理后的一行数据, \r\n已经被处理成\0了
 http_conn::HTTP_CODE http_conn::parse_headers(char *text)
 {
+    // 空行, 表示请求头解析完毕
     if (text[0] == '\0')
     {
-        if (m_content_length != 0)
+        if (m_content_length != 0)  // POST请求, 还有请求体要读
         {
-            m_check_state = CHECK_STATE_CONTENT;
+            m_check_state = CHECK_STATE_CONTENT;    // 状态迁移: 请求头解析 -> 请求体解析
             return NO_REQUEST;
         }
-        return GET_REQUEST;
+        return GET_REQUEST; // 没有请求体, 则解析完毕
     }
-    else if (strncasecmp(text, "Connection:", 11) == 0)
+    // 继续解析请求头
+    else if (strncasecmp(text, "Connection:", 11) == 0) // 保持连接
     {
         text += 11;
         text += strspn(text, " \t");
@@ -307,26 +314,26 @@ http_conn::HTTP_CODE http_conn::parse_headers(char *text)
             m_linger = true;
         }
     }
-    else if (strncasecmp(text, "Content-length:", 15) == 0)
+    else if (strncasecmp(text, "Content-length:", 15) == 0) // 请求体长度
     {
         text += 15;
         text += strspn(text, " \t");
         m_content_length = atol(text);
     }
-    else if (strncasecmp(text, "Host:", 5) == 0)
+    else if (strncasecmp(text, "Host:", 5) == 0)    // 主机名
     {
         text += 5;
         text += strspn(text, " \t");
         m_host = text;
     }
-    else
+    else    // 其他字段名不解析
     {
         LOG_INFO("oop!unknow header: %s", text);
     }
     return NO_REQUEST;
 }
 
-//判断http请求是否被完整读入
+// 解析请求体(直接复制就行, 就是用户数据)判断http请求是否被完整读入
 http_conn::HTTP_CODE http_conn::parse_content(char *text)
 {
     if (m_read_idx >= (m_content_length + m_checked_idx))
@@ -345,6 +352,7 @@ http_conn::HTTP_CODE http_conn::process_read()
     HTTP_CODE ret = NO_REQUEST;
     char *text = 0;
 
+    // [ ] TODO: 感觉可能写的有点问题, 应该是想说CHECK_STATE_CONTENT不需要parse_line, 但如果不是LINE_OK还是会解析
     while ((m_check_state == CHECK_STATE_CONTENT && line_status == LINE_OK) || ((line_status = parse_line()) == LINE_OK))
     {
         text = get_line();
@@ -352,14 +360,14 @@ http_conn::HTTP_CODE http_conn::process_read()
         LOG_INFO("%s", text);
         switch (m_check_state)
         {
-        case CHECK_STATE_REQUESTLINE:
+        case CHECK_STATE_REQUESTLINE:   // 解析请求行
         {
             ret = parse_request_line(text);
             if (ret == BAD_REQUEST)
                 return BAD_REQUEST;
             break;
         }
-        case CHECK_STATE_HEADER:
+        case CHECK_STATE_HEADER:        // 解析请求头
         {
             ret = parse_headers(text);
             if (ret == BAD_REQUEST)
@@ -370,7 +378,7 @@ http_conn::HTTP_CODE http_conn::process_read()
             }
             break;
         }
-        case CHECK_STATE_CONTENT:
+        case CHECK_STATE_CONTENT:       // 解析请求体
         {
             ret = parse_content(text);
             if (ret == GET_REQUEST)
@@ -685,18 +693,23 @@ bool http_conn::process_write(HTTP_CODE ret)
     bytes_to_send = m_write_idx;
     return true;
 }
+
+// http报文解析与响应
 void http_conn::process()
 {
-    HTTP_CODE read_ret = process_read();
+    HTTP_CODE read_ret = process_read();    // 报文解析
+    // NO_REQUEST表示请求不完整，需要继续接收请求数据
     if (read_ret == NO_REQUEST)
     {
+        // 注册并监听读事件
         modfd(m_epollfd, m_sockfd, EPOLLIN, m_TRIGMode);
         return;
     }
-    bool write_ret = process_write(read_ret);
+    bool write_ret = process_write(read_ret);   // 报文响应
     if (!write_ret)
     {
         close_conn();
     }
+    // 注册并监听写事件
     modfd(m_epollfd, m_sockfd, EPOLLOUT, m_TRIGMode);
 }

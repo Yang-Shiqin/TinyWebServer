@@ -18,39 +18,40 @@ connection_pool::connection_pool()
 
 connection_pool *connection_pool::GetInstance()
 {
-	static connection_pool connPool;
+	static connection_pool connPool;	// 懒汉式，第一次调用时创建
 	return &connPool;
 }
 
-//构造初始化
+// 数据库连接池初始化
 void connection_pool::init(string url, string User, string PassWord, string DBName, int Port, int MaxConn, int close_log)
 {
-	m_url = url;
-	m_Port = Port;
-	m_User = User;
-	m_PassWord = PassWord;
-	m_DatabaseName = DBName;
+	m_url = url;				// 数据库url(localhost, 因为服务器运行在本地)
+	m_Port = Port;				// 数据库端口号(mysql是3306)
+	m_User = User;				// 数据库用户名
+	m_PassWord = PassWord;		// 数据库密码
+	m_DatabaseName = DBName;	// 数据库名称
 	m_close_log = close_log;
 
 	for (int i = 0; i < MaxConn; i++)
 	{
 		MYSQL *con = NULL;
+		// 初始化连接
 		con = mysql_init(con);
-
 		if (con == NULL)
 		{
 			LOG_ERROR("MySQL Error");
 			exit(1);
 		}
+		// 建立一个到mysql数据库的连接
 		con = mysql_real_connect(con, url.c_str(), User.c_str(), PassWord.c_str(), DBName.c_str(), Port, NULL, 0);
-
 		if (con == NULL)
 		{
 			LOG_ERROR("MySQL Error");
 			exit(1);
 		}
-		connList.push_back(con);
-		++m_FreeConn;
+
+		connList.push_back(con);	// 放入数据库连接池
+		++m_FreeConn;		// 信号量初值++
 	}
 
 	reserve = sem(m_FreeConn);
@@ -67,12 +68,12 @@ MYSQL *connection_pool::GetConnection()
 	if (0 == connList.size())
 		return NULL;
 
-	reserve.wait();
+	reserve.wait();	// P, await, reserve--
 	
-	lock.lock();
+	lock.lock();	// connList是全局的, 需要加锁
 
 	con = connList.front();
-	connList.pop_front();
+	connList.pop_front();	// 删除链表中第一个元素
 
 	--m_FreeConn;
 	++m_CurConn;
@@ -95,11 +96,11 @@ bool connection_pool::ReleaseConnection(MYSQL *con)
 
 	lock.unlock();
 
-	reserve.post();
+	reserve.post();		// V, release, reserve++
 	return true;
 }
 
-//销毁数据库连接池
+//销毁数据库连接池(感觉这样写很容易泄露啊(可能池就是这样？取一瓢取一瓢不还就是会干，是取而不是借))
 void connection_pool::DestroyPool()
 {
 
@@ -110,6 +111,7 @@ void connection_pool::DestroyPool()
 		for (it = connList.begin(); it != connList.end(); ++it)
 		{
 			MYSQL *con = *it;
+			// 销毁数据库连接
 			mysql_close(con);
 		}
 		m_CurConn = 0;
@@ -132,7 +134,7 @@ connection_pool::~connection_pool()
 }
 
 connectionRAII::connectionRAII(MYSQL **SQL, connection_pool *connPool){
-	*SQL = connPool->GetConnection();
+	*SQL = connPool->GetConnection();	// 出参
 	
 	conRAII = *SQL;
 	poolRAII = connPool;

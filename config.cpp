@@ -1,5 +1,6 @@
 #include "config.h"
 
+// 运行./server的参数配置
 Config::Config(){
     //端口号,默认9006
     PORT = 9006;
@@ -34,12 +35,12 @@ Config::Config(){
 
 void Config::parse_arg(int argc, char*argv[]){
     int opt;
-    const char *str = "p:l:m:o:s:t:c:a:";
+    const char *str = "p:l:m:o:s:t:c:a:";   // 每种选项出现则必须带参数
     while ((opt = getopt(argc, argv, str)) != -1)
     {
         switch (opt)
         {
-        case 'p':
+        case 'p':   // 指定服务器端口号
         {
             PORT = atoi(optarg);
             break;
@@ -79,7 +80,9 @@ void Config::parse_arg(int argc, char*argv[]){
             actor_model = atoi(optarg);
             break;
         }
-        default:
+        default:    /* case '?' */
+            fprintf(stderr, "Usage: %s [-p port] [-l LOGWrite] [-m TRIGMode] [-o OPT_LINGER] "
+                "[-s sql_num] [-t thread_num] [-c close_log] [-a actor_model]", argv[0]);
             break;
         }
     }

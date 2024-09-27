@@ -2,7 +2,7 @@
 
 WebServer::WebServer()
 {
-    //http_conn类对象
+    // http_conn类对象
     users = new http_conn[MAX_FD];
 
     //root文件夹路径
@@ -374,6 +374,7 @@ void WebServer::dealwithwrite(int sockfd)
     }
 }
 
+// 主线程?
 void WebServer::eventLoop()
 {
     bool timeout = false;
@@ -381,6 +382,7 @@ void WebServer::eventLoop()
 
     while (!stop_server)
     {
+        // 等待所监控文件描述符上有事件的产生
         int number = epoll_wait(m_epollfd, events, MAX_EVENT_NUMBER, -1);
         if (number < 0 && errno != EINTR)
         {
@@ -388,17 +390,19 @@ void WebServer::eventLoop()
             break;
         }
 
+        // 对所有就绪事件进行处理
         for (int i = 0; i < number; i++)
         {
-            int sockfd = events[i].data.fd;
+            int sockfd = events[i].data.fd; // 获取就绪socket
 
             //处理新到的客户连接
-            if (sockfd == m_listenfd)
+            if (sockfd == m_listenfd)   // [ ] TODO
             {
                 bool flag = dealclientdata();
                 if (false == flag)
                     continue;
             }
+            // 处理异常事件
             else if (events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR))
             {
                 //服务器端关闭连接，移除对应的定时器
@@ -413,16 +417,16 @@ void WebServer::eventLoop()
                     LOG_ERROR("%s", "dealclientdata failure");
             }
             //处理客户连接上接收到的数据
-            else if (events[i].events & EPOLLIN)
+            else if (events[i].events & EPOLLIN)    // 监视到读事件
             {
-                dealwithread(sockfd);
+                dealwithread(sockfd);   // 处理读事件
             }
-            else if (events[i].events & EPOLLOUT)
+            else if (events[i].events & EPOLLOUT)   // 写事件
             {
                 dealwithwrite(sockfd);
             }
         }
-        if (timeout)
+        if (timeout)    // 定时器超时
         {
             utils.timer_handler();
 
