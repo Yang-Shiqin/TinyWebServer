@@ -20,7 +20,7 @@ public:
 
 private:
     /*工作线程运行的函数，它不断从工作队列中取出任务并执行之*/
-    static void *worker(void *arg);     // pthread_create要求线程入口是void*(*)(void*), 所以得是静态的(没有自动的this参数)
+    static void *worker(void *arg);     // pthread_create要求线程入口是void*(*)(void*), 所以得是静态的(没有自动的this参数), 所以得把this从参数传入
     void run();
 
 private:
@@ -39,12 +39,14 @@ threadpool<T>::threadpool(int actor_model, connection_pool *connPool, int thread
     m_actor_model(actor_model), m_thread_number(thread_number), 
     m_max_requests(max_requests), m_threads(NULL), m_connPool(connPool)
 {
+    // 参数检查
     if (thread_number <= 0 || max_requests <= 0)
         throw std::exception();
     m_threads = new pthread_t[m_thread_number];
     if (!m_threads)
         throw std::exception();
-    for (int i = 0; i < thread_number; ++i) // 创建工作线程池
+    // 创建工作线程池
+    for (int i = 0; i < thread_number; ++i)
     {
         if (pthread_create(m_threads + i, NULL, worker, this) != 0) // 把对象作为参数传递给worker静态函数
         {

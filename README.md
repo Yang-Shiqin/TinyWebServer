@@ -267,18 +267,20 @@ Linux高性能服务器编程，游双著.
 ## 代码框架
 ```bash
 .
-├── [x] build.sh        # make server
-├── [x] makefile        # 构建tiny webserver项目
-├── [ ] main.cpp        # 主函数
-├── [x] config.h/cpp    # .server命令参数配置
-├── [x] lock            # 线程同步机制包装类(ostep的线程API)
-├── [x] CGImysql        # 数据库连接池
-├── [ ] root            # 网站界面(登录、注册、图片、视频等)
-├── [ ] log             # 同步/异步日志系统
-├── [x] threadpool      # 半同步/半反应堆线程池
-├── [ ] http            # http连接处理类
-├── [ ] timer           # 定时器处理非活动连接
+├── build.sh        # make server
+├── makefile        # 构建tiny webserver项目
+├── main.cpp        # 主函数
+├── config.h/cpp    # .server命令参数配置
+├── lock            # 线程同步机制包装类(ostep的线程API)
+├── threadpool      # 半同步/半反应堆线程池
+├── CGImysql        # 数据库连接池
+├── http            # http连接处理类
+├── root            # 网站界面(登录、注册、图片、视频等)
+├── log             # 同步/异步日志系统
+│   ├── block_queue.h       # 单例模式和阻塞队列
+│   └── log.h/cpp           # 日志系统
+├── timer           # 定时器处理非活动连接
 ├── [ ] test_pressure   # 压力测试
-├── [ ] webserver.cpp
-└── [ ] webserver.h
+├── webserver.cpp   # 主线程？
+└── webserver.h
 ```

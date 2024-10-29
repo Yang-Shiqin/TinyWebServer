@@ -37,6 +37,7 @@ void sort_timer_lst::add_timer(util_timer *timer)
     }
     add_timer(timer, head);
 }
+// 只会把到期时间延后
 void sort_timer_lst::adjust_timer(util_timer *timer)
 {
     if (!timer)
@@ -106,9 +107,9 @@ void sort_timer_lst::tick()
     {
         if (cur < tmp->expire)
         {
-            break;
+            break;      // 没有发生超时事件
         }
-        tmp->cb_func(tmp->user_data);
+        tmp->cb_func(tmp->user_data);   // 超时事件发生，调用回调函数
         head = tmp->next;
         if (head)
         {
@@ -176,13 +177,16 @@ void Utils::addfd(int epollfd, int fd, bool one_shot, int TRIGMode)
     setnonblocking(fd);
 }
 
-//信号处理函数
+//信号处理函数(仅仅通过管道发送信号值，不处理信号对应的逻辑，缩短异步执行时间，减少对主程序的影响)
 void Utils::sig_handler(int sig)
 {
-    //为保证函数的可重入性，保留原来的errno
+    // 为保证函数的可重入性，保留原来的errno
+    // 可重入性表示中断后再次进入该函数，环境变量与之前相同，不会丢失数据
     int save_errno = errno;
     int msg = sig;
+    // 将信号值从管道写端写入，传输字符类型，而非整型
     send(u_pipefd[1], (char *)&msg, 1, 0);
+    // 将原来的errno赋值为当前的errno
     errno = save_errno;
 }
 
@@ -194,6 +198,7 @@ void Utils::addsig(int sig, void(handler)(int), bool restart)
     sa.sa_handler = handler;
     if (restart)
         sa.sa_flags |= SA_RESTART;
+    // 将所有信号添加到信号集中
     sigfillset(&sa.sa_mask);
     assert(sigaction(sig, &sa, NULL) != -1);
 }
@@ -215,10 +220,13 @@ int *Utils::u_pipefd = 0;
 int Utils::u_epollfd = 0;
 
 class Utils;
-void cb_func(client_data *user_data)
+void cb_func(client_data *user_data)    // 关闭非活动连接
 {
+    // 删除非活动连接在socket上的注册事件
     epoll_ctl(Utils::u_epollfd, EPOLL_CTL_DEL, user_data->sockfd, 0);
     assert(user_data);
+    // 关闭文件描述符
     close(user_data->sockfd);
+    // 减少连接数
     http_conn::m_user_count--;
 }

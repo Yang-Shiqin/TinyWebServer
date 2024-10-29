@@ -52,12 +52,12 @@ public:
     };
     enum HTTP_CODE      // 报文解析的结果
     {
-        NO_REQUEST,         // 报文未解析完，需要继续读取请求报文数据并解析
-        GET_REQUEST,        // 获得了完整的HTTP请求
-        BAD_REQUEST,        // HTTP请求报文有语法错误
-        NO_RESOURCE,
-        FORBIDDEN_REQUEST,
-        FILE_REQUEST,
+        NO_REQUEST,         // 报文未解析完，需要继续读取请求报文数据并解析(跳转主线程继续监测读事件)
+        GET_REQUEST,        // 获得了完整的HTTP请求(调用do_request完成请求资源映射)
+        BAD_REQUEST,        // HTTP请求报文有语法错误或请求资源为目录(跳转process_write完成响应报文)
+        NO_RESOURCE,        // 请求资源不存在(跳转process_write完成响应报文)
+        FORBIDDEN_REQUEST,  // 请求资源禁止访问，没有读取权限(跳转process_write完成响应报文)
+        FILE_REQUEST,       // 请求资源可以正常访问(跳转process_write完成响应报文)
         INTERNAL_ERROR,     // 服务器内部错误，该结果在主状态机逻辑switch的default下，一般不会触发
         CLOSED_CONNECTION
     };
@@ -72,42 +72,38 @@ public:
     http_conn() {}  // 不知道为啥不用无参构函和赋值构函(然后不让调无参构函不就好了)
     ~http_conn() {}
 
-public:
     // 赋值构函
     void init(int sockfd, const sockaddr_in &addr, char *, int, int, string user, string passwd, string sqlname);
-    void close_conn(bool real_close = true);            // 关闭http连接
     void process();                                     // 处理请求
     bool read_once();                                   // 读取浏览器端发来的全部数据
     bool write();                                       // 响应报文写入函数
     sockaddr_in *get_address() { return &m_address; }   // 获取socket地址
+    void close_conn(bool real_close = true);            // 关闭http连接
     void initmysql_result(connection_pool *connPool);   // 同步线程初始化数据库读取表
     int timer_flag;
-    int improv;
-
+    int improv;                                         // 是否处理完成, 1代表完成
 
 private:
-    // 初始化默认成员变量
-    void init();
+    void init();                                        // 初始化默认成员变量
     HTTP_CODE process_read();                           // 从m_read_buf读取，并处理请求报文
     bool process_write(HTTP_CODE ret);                  // 向m_write_buf写入响应报文数据
     HTTP_CODE parse_request_line(char *text);           // 主状态机解析报文中的请求行数据
     HTTP_CODE parse_headers(char *text);                // 主状态机解析报文中的请求头数据
     HTTP_CODE parse_content(char *text);                // 主状态机解析报文中的请求内容
     HTTP_CODE do_request();                             // 生成响应报文
-    // m_start_line是已经解析的字符, get_line用于将指针向后偏移，指向未处理的字符
-    char *get_line() { return m_read_buf + m_start_line; };
-    LINE_STATUS parse_line();                           // 从状态机读取一行，分析是请求报文的哪一部分
+    char *get_line() { return m_read_buf + m_start_line; }; // 获取这次要解析的行的行首
+    LINE_STATUS parse_line();                           // 从状态机读取一行，返回行读取状态(LINE_OK则为完整一行)
     void unmap();
 
-    // 根据响应报文格式，生成对应8个部分，以下函数均由do_request调用
-    bool add_response(const char *format, ...);
-    bool add_content(const char *content);
-    bool add_status_line(int status, const char *title);
-    bool add_headers(int content_length);
+    // 生成响应报文内容
+    bool add_response(const char *format, ...);             // 向m_write_buf写入响应报文数据
+    bool add_status_line(int status, const char *title);    // 生成状态行
+    bool add_headers(int content_length);                   // 生成响应头
+    bool add_content(const char *content);                  // 生成响应体
     bool add_content_type();
-    bool add_content_length(int content_length);
-    bool add_linger();
-    bool add_blank_line();
+    bool add_content_length(int content_length);            // 生成Content-Length
+    bool add_linger();                                      // 生成Connection
+    bool add_blank_line();                                  // 添加空行
 
 public:
     static int m_epollfd;
@@ -119,16 +115,16 @@ private:
     int m_sockfd;                                       // socket(文件描述符)
     sockaddr_in m_address;                              // socket地址
     char m_read_buf[READ_BUFFER_SIZE];                  // 存储读取的请求报文数据
-    long m_read_idx;                                    // [ ] TODO: m_read_buf中数据的最后一个字节的下一个位置
-    long m_checked_idx;                                 // m_read_buf读取的位置m_checked_idx
-    int m_start_line;                                   // m_read_buf中已经解析的字符个数
+    long m_read_idx;                                    // m_read_buf中数据的最后一个字节的下一个位置(读到的最新位置)
+    long m_checked_idx;                                 // m_read_buf读取的位置m_checked_idx(从状态机parse_line解析到的位置)
+    int m_start_line;                                   // 下次要解析的数据行在m_read_buf中的起始位置
     char m_write_buf[WRITE_BUFFER_SIZE];                // 存储发出的响应报文数据
     int m_write_idx;                                    // 指示buffer中的长度
     CHECK_STATE m_check_state;                          // 主状态机的状态
     METHOD m_method;                                    // 请求方法
 
     // 以下为解析请求报文中对应的6个变量, 存储读取文件的名称
-    char m_real_file[FILENAME_LEN];  
+    char m_real_file[FILENAME_LEN];                     // 真正的响应页面路径
     char *m_url;                                        // url
     char *m_version;                                    // http版本号
     char *m_host;                                       // 主机名

@@ -18,14 +18,15 @@ class connection_pool
 public:
 	connection_pool(const connection_pool&) = delete;				// 单例模式: 禁用拷贝构造
     connection_pool& operator=(const connection_pool&) = delete;	// 单例模式: 禁用赋值(原来写的不是单例, 我把它改正了)
-	MYSQL *GetConnection();				 //获取数据库连接
-	bool ReleaseConnection(MYSQL *conn); //释放连接
-	int GetFreeConn();					 //获取连接
-	void DestroyPool();					 //销毁所有连接
-
 	static connection_pool *GetInstance();	// 单例模式: 静态函数创建对象
 
-	void init(string url, string User, string PassWord, string DataBaseName, int Port, int MaxConn, int close_log); 
+	MYSQL *GetConnection();				 // 获取数据库连接对象
+	void init(string url, string User, string PassWord, string DataBaseName, 
+		int Port, int MaxConn, int close_log);		// 初始化
+	int GetFreeConn();					 // 获取连接
+	bool ReleaseConnection(MYSQL *conn); // 释放连接
+	void DestroyPool();					 // 销毁所有连接
+
 
 private:
 	connection_pool();		// 单例模式: 私有构造函数

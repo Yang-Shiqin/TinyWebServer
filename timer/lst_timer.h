@@ -28,35 +28,35 @@ class util_timer;
 
 struct client_data
 {
-    sockaddr_in address;
-    int sockfd;
+    sockaddr_in address;    // 客户端socket地址
+    int sockfd;             // socket文件描述符
     util_timer *timer;
 };
 
-class util_timer
+class util_timer        // 双向链表节点(定时器)
 {
 public:
     util_timer() : prev(NULL), next(NULL) {}
 
 public:
-    time_t expire;
+    time_t expire;      // 到期时间
     
-    void (* cb_func)(client_data *);
+    void (* cb_func)(client_data *);    // 回调函数, 指向定时事件
     client_data *user_data;
     util_timer *prev;
     util_timer *next;
 };
 
-class sort_timer_lst
+class sort_timer_lst    // 到期时间升序排序的双向链表
 {
 public:
     sort_timer_lst();
     ~sort_timer_lst();
 
-    void add_timer(util_timer *timer);
-    void adjust_timer(util_timer *timer);
-    void del_timer(util_timer *timer);
-    void tick();
+    void add_timer(util_timer *timer);      // 将目标定时器按升序添加到链表中
+    void adjust_timer(util_timer *timer);   // 当定时任务发生变化, 调整对应定时器在链表中的位置(只考虑到期时间延长的情况)
+    void del_timer(util_timer *timer);      // 将目标定时器从链表中删除
+    void tick();                            // 定时触发, 检查链表中的定时任务是否到期, 到期则调用回调函数
 
 private:
     void add_timer(util_timer *timer, util_timer *lst_head);

@@ -17,6 +17,7 @@ template <class T>
 class block_queue
 {
 public:
+    // 创建大小为max_size的循环队列
     block_queue(int max_size = 1000)
     {
         if (max_size <= 0)
@@ -27,10 +28,11 @@ public:
         m_max_size = max_size;
         m_array = new T[max_size];
         m_size = 0;
-        m_front = -1;
-        m_back = -1;
+        m_front = -1;   // 队首, 指向队列中第一个元素前一个位置
+        m_back = -1;    // 队尾, 指向队列中最后一个元素
     }
 
+    // 清空队列
     void clear()
     {
         m_mutex.lock();
@@ -73,7 +75,7 @@ public:
         m_mutex.unlock();
         return false;
     }
-    //返回队首元素
+    //返回队首元素      // [ ] TODO: 这写的不对吧, 应该是返回m_front+1吧
     bool front(T &value) 
     {
         m_mutex.lock();
@@ -111,7 +113,7 @@ public:
         return tmp;
     }
 
-    int max_size()
+    int max_size()  // 这个应该不用锁吧, m_max_size是固定的
     {
         int tmp = 0;
 
@@ -128,7 +130,7 @@ public:
     {
 
         m_mutex.lock();
-        if (m_size >= m_max_size)
+        if (m_size >= m_max_size)   // [ ] TODO: 我感觉这里也写的不好, 应该写成生产者的样子
         {
 
             m_cond.broadcast();
